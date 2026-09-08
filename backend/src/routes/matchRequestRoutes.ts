@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { createMatchRequest } from "../services/matchRequestService.js";
 import { db } from "../config/firebase.js";
+import { tryCreateMatch } from "../services/matchingService.js";
 const router = Router();
 router.get("/", async (_req, res) => {
   try {
@@ -20,9 +21,51 @@ router.get("/", async (_req, res) => {
     });
   }
 });
+router.get("/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const doc = await db
+      .collection("matchRequests")
+      .doc(id)
+      .get();
+
+    if (!doc.exists) {
+      return res.status(404).json({
+        message: "Match request not found",
+      });
+    }
+
+    const matchRequest = doc.data();
+
+if (matchRequest?.status === "matched" && matchRequest.matchId) {
+  const matchDoc = await db
+    .collection("matches")
+    .doc(matchRequest.matchId)
+    .get();
+
+  if (matchDoc.exists) {
+    return res.status(200).json({
+      ...matchRequest,
+      match: matchDoc.data(),
+    });
+  }
+}
+
+return res.status(200).json({
+  ...matchRequest,
+  match: null,
+});
+  } catch (error) {
+    console.error(error);
+
+    return res.status(500).json({
+      message: "Failed to get match request",
+    });
+  }
+});
 router.post("/", async (req, res) => {
   try {
-    console.log("BODY:", req.body);
     const { playerId, sport, desiredTime, location } = req.body ?? {};
 
     if (!playerId || !sport || !desiredTime) {
@@ -31,6 +74,7 @@ router.post("/", async (req, res) => {
       });
     }
 
+    // 1. Tạo Match Request
     const matchRequest = await createMatchRequest({
       playerId,
       sport,
@@ -38,7 +82,13 @@ router.post("/", async (req, res) => {
       location: location ?? undefined,
     });
 
-    return res.status(201).json(matchRequest);
+    // 2. Thử matching ngay sau khi tạo request
+    const match = await tryCreateMatch(sport);
+
+    return res.status(201).json({
+      matchRequest,
+      match,
+    });
   } catch (error) {
     console.error(error);
 
